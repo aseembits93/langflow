@@ -22,14 +22,17 @@ from langflow.base.tools.constants import (
     TOOLS_METADATA_INPUT_NAME,
 )
 from langflow.custom.tree_visitor import RequiredInputsVisitor
+from langflow.events.event_manager import EventManager
 from langflow.exceptions.component import StreamingError
 from langflow.field_typing import Tool  # noqa: TC001 Needed by _add_toolkit_output
+from langflow.graph.edge.schema import EdgeData
 
 # Lazy import to avoid circular dependency
 # from langflow.graph.state.model import create_state_model
 # Lazy import to avoid circular dependency
 # from langflow.graph.utils import has_chat_output
 from langflow.helpers.custom import format_type
+from langflow.inputs.inputs import InputTypes
 from langflow.memory import astore_message, aupdate_messages, delete_message
 from langflow.schema.artifact import get_artifact_type, post_process_raw
 from langflow.schema.data import Data
@@ -122,27 +125,27 @@ class Component(CustomComponent):
         self._event_manager: EventManager | None = None
         self._state_model = None
 
-        # Process input kwargs
+        # Collect inputs/config, inline for less overhead
         inputs = {}
         config = {}
-        for key, value in kwargs.items():
-            if key.startswith("_"):
-                config[key] = value
-            elif key in CONFIG_ATTRIBUTES:
-                config[key[1:]] = value
+        for k, v in kwargs.items():
+            if k.startswith("_"):
+                config[k] = v
+            elif k in CONFIG_ATTRIBUTES:
+                config[k[1:]] = v
             else:
-                inputs[key] = value
+                inputs[k] = v
 
-        self._parameters = inputs or {}
+        self._parameters = inputs if inputs else {}
         self.set_attributes(self._parameters)
 
         # Store original inputs and config for reference
         self.__inputs = inputs
-        self.__config = config or {}
+        self.__config = config if config else {}
 
         # Add unique ID if not provided
         if "_id" not in self.__config:
-            self.__config |= {"_id": f"{self.__class__.__name__}-{nanoid.generate(size=5)}"}
+            self.__config["_id"] = f"{self.__class__.__name__}-{nanoid.generate(size=5)}"
 
         # Initialize base class
         super().__init__(**self.__config)
@@ -155,6 +158,10 @@ class Component(CustomComponent):
 
         # Setup inputs and outputs
         self._reset_all_output_values()
+
+        # Create a fast unique-list for self.inputs
+        self.inputs = []  # now always a list, _inputs is the lookup dict
+
         if self.inputs is not None:
             self.map_inputs(self.inputs)
         self.map_outputs()
@@ -763,13 +770,14 @@ class Component(CustomComponent):
             self._process_connection_or_parameter(key, value)
 
     def _get_or_create_input(self, key):
-        try:
-            return self._inputs[key]
-        except KeyError:
-            input_ = self._get_fallback_input(name=key, display_name=key)
-            self._inputs[key] = input_
-            self.inputs.append(input_)
-            return input_
+        # Fast-path: always check dict, never do redundant list append/check.
+        inp = self._inputs.get(key)
+        if inp is not None:
+            return inp
+        inp = self._get_fallback_input(name=key, display_name=key)
+        self._inputs[key] = inp
+        self.inputs.append(inp)  # Only ever appended here if missing
+        return inp
 
     def _connect_to_component(self, key, value, input_) -> None:
         component = value.__self__
