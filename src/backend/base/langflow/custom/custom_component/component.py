@@ -22,14 +22,17 @@ from langflow.base.tools.constants import (
     TOOLS_METADATA_INPUT_NAME,
 )
 from langflow.custom.tree_visitor import RequiredInputsVisitor
+from langflow.events.event_manager import EventManager
 from langflow.exceptions.component import StreamingError
 from langflow.field_typing import Tool  # noqa: TC001 Needed by _add_toolkit_output
+from langflow.graph.edge.schema import EdgeData
 
 # Lazy import to avoid circular dependency
 # from langflow.graph.state.model import create_state_model
 # Lazy import to avoid circular dependency
 # from langflow.graph.utils import has_chat_output
 from langflow.helpers.custom import format_type
+from langflow.inputs.inputs import InputTypes
 from langflow.memory import astore_message, aupdate_messages, delete_message
 from langflow.schema.artifact import get_artifact_type, post_process_raw
 from langflow.schema.data import Data
@@ -1201,22 +1204,39 @@ class Component(CustomComponent):
         return {"repr": custom_repr, "raw": raw, "type": artifact_type}
 
     def _process_raw_result(self, result):
+        # Direct call for extract_data; optimized there
         return self.extract_data(result)
 
     def extract_data(self, result):
         """Extract the data from the result. this is where the self.status is set."""
-        if isinstance(result, Message):
-            self.status = result.get_text()
-            return (
-                self.status if self.status is not None else "No text available"
-            )  # Provide a default message if .text_key is missing
-        if hasattr(result, "data"):
-            return result.data
-        if hasattr(result, "model_dump"):
-            return result.model_dump()
-        if isinstance(result, Data | dict | str):
-            return result.data if isinstance(result, Data) else result
+        # Fast-path: Message type (if common)
+        rtype = type(result)
+        if rtype is Message:
+            text = result.get_text()
+            self.status = text
+            # Provide a default message if .text_key is missing
+            return text if text is not None else "No text available"
 
+        # Fast-path: Data type (faster isinstance check for one type)
+        if rtype is Data:
+            return result.data
+
+        # Fast-path: Built-in dict or str (skip python3.10 | type union to avoid overhead)
+        if rtype is dict or rtype is str:
+            return result
+
+        # Fast hasattr checks, short-circuit as soon as we find our target
+        # Try to avoid costly hasattr unless rtype is arbitrary
+        # -- 'model_dump' is much rarer, so check 'data' first if result is not Data
+        attr = getattr(result, "data", None)
+        if attr is not None:
+            return attr
+
+        model_dump = getattr(result, "model_dump", None)
+        if callable(model_dump):
+            return model_dump()
+
+        # Only at this point consider self.status and finally fallback to result
         if self.status:
             return self.status
         return result
