@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from langflow.services.base import Service
+from langflow.services.settings.service import SettingsService
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -30,9 +31,12 @@ def _get_langsmith_tracer():
 
 
 def _get_langwatch_tracer():
-    from langflow.services.tracing.langwatch import LangWatchTracer
+    global _LangWatchTracer_cached
+    if _LangWatchTracer_cached is None:
+        from langflow.services.tracing.langwatch import LangWatchTracer
 
-    return LangWatchTracer
+        _LangWatchTracer_cached = LangWatchTracer
+    return _LangWatchTracer_cached
 
 
 def _get_langfuse_tracer():
@@ -429,3 +433,6 @@ class TracingService(Service):
             if langchain_callback:
                 callbacks.append(langchain_callback)
         return callbacks
+
+
+_LangWatchTracer_cached = None
