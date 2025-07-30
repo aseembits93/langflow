@@ -304,9 +304,15 @@ class TableMixin(BaseModel):
     @field_validator("table_schema")
     @classmethod
     def validate_table_schema(cls, v):
-        if isinstance(v, list) and all(isinstance(column, Column) for column in v):
-            return TableSchema(columns=v)
-        if isinstance(v, TableSchema):
+        # Fast direct type checks
+        if type(v) is TableSchema:
             return v
-        msg = "table_schema must be a TableSchema or a list of Columns"
-        raise ValueError(msg)
+        if type(v) is list:
+            for column in v:
+                if type(column) is not Column:
+                    raise ValueError(_ERR_MSG)
+            return TableSchema(columns=v)
+        raise ValueError(_ERR_MSG)
+
+
+_ERR_MSG = "table_schema must be a TableSchema or a list of Columns"
