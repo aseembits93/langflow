@@ -34,6 +34,8 @@ class Properties(BaseModel):
 
     @field_serializer("source")
     def serialize_source(self, value):
-        if isinstance(value, Source):
+        source_type = Source  # Use local variable for faster lookup
+        if isinstance(value, source_type):
+            # Fastest access using local var, avoids repeated global lookup
             return value.model_dump()
         return value
