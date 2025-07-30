@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import re
 from datetime import datetime, timezone
 
 from pydantic import BeforeValidator
@@ -18,29 +21,59 @@ def timestamp_to_str(timestamp: datetime | str) -> str:
         ValueError: If string timestamp is in invalid format
     """
     if isinstance(timestamp, str):
-        # Try parsing with different formats
-        formats = [
-            "%Y-%m-%dT%H:%M:%S",  # ISO format
-            "%Y-%m-%d %H:%M:%S %Z",  # Standard with timezone
-            "%Y-%m-%d %H:%M:%S",  # Without timezone
-            "%Y-%m-%dT%H:%M:%S.%f",  # ISO with microseconds
-            "%Y-%m-%dT%H:%M:%S%z",  # ISO with numeric timezone
-        ]
+        ts = timestamp.strip()
+        # Fast path for ISO-8601
+        m = _iso8601_re.match(ts)
+        if m:
+            date, timestr, micros, tz = m.groups()
+            dt_str = f"{date}T{timestr}"
+            if micros:
+                dt_str += f".{micros}"
+            if tz and ("Z" in tz or "+00:00" in tz or "UTC" in tz):
+                try:
+                    # parse with microsecond or not depending on micros group
+                    fmt = "%Y-%m-%dT%H:%M:%S.%f" if micros else "%Y-%m-%dT%H:%M:%S"
+                    parsed = datetime.strptime(dt_str, fmt).replace(tzinfo=timezone.utc)
+                except Exception:
+                    # If cannot parse even with proper regex, fallback to old way
+                    pass
+                else:
+                    return parsed.strftime("%Y-%m-%d %H:%M:%S UTC")
+            else:
+                try:
+                    fmt = "%Y-%m-%dT%H:%M:%S.%f" if micros else "%Y-%m-%dT%H:%M:%S"
+                    parsed = datetime.strptime(dt_str, fmt).replace(tzinfo=timezone.utc)
+                except Exception:
+                    pass
+                else:
+                    return parsed.strftime("%Y-%m-%d %H:%M:%S UTC")
 
-        for fmt in formats:
+        # Only if regex does not match, try slower ways (rare)
+        # Try parsing with different formats
+        for fmt in (
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M:%S %Z",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S%z",
+        ):
             try:
-                parsed = datetime.strptime(timestamp.strip(), fmt).replace(tzinfo=timezone.utc)
-                return parsed.strftime("%Y-%m-%d %H:%M:%S %Z")
+                parsed = datetime.strptime(ts, fmt).replace(tzinfo=timezone.utc)
+                return parsed.strftime("%Y-%m-%d %H:%M:%S UTC")
             except ValueError:
                 continue
 
         msg = f"Invalid timestamp format: {timestamp}"
         raise ValueError(msg)
 
-    # Handle datetime object
-    if timestamp.tzinfo is None:
-        timestamp = timestamp.replace(tzinfo=timezone.utc)
-    return timestamp.strftime("%Y-%m-%d %H:%M:%S %Z")
+    # Fast path for datetime (do nothing if already UTC)
+    if timestamp.tzinfo is not None and (
+        timestamp.tzinfo is timezone.utc or getattr(timestamp.tzinfo, "zone", None) == "UTC"
+    ):
+        return timestamp.strftime("%Y-%m-%d %H:%M:%S %Z")
+    # Assume naive is UTC per contract
+    timestamp = timestamp.replace(tzinfo=timezone.utc)
+    return timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def str_to_timestamp(timestamp: str | datetime) -> datetime:
@@ -112,3 +145,5 @@ def timestamp_with_fractional_seconds(timestamp: datetime | str) -> str:
 timestamp_to_str_validator = BeforeValidator(timestamp_to_str)
 timestamp_with_fractional_seconds_validator = BeforeValidator(timestamp_with_fractional_seconds)
 str_to_timestamp_validator = BeforeValidator(str_to_timestamp)
+
+_iso8601_re = re.compile(r"^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z| ?UTC| ?\+00:00)?$")
