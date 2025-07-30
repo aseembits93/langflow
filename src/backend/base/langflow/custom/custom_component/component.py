@@ -22,14 +22,17 @@ from langflow.base.tools.constants import (
     TOOLS_METADATA_INPUT_NAME,
 )
 from langflow.custom.tree_visitor import RequiredInputsVisitor
+from langflow.events.event_manager import EventManager
 from langflow.exceptions.component import StreamingError
 from langflow.field_typing import Tool  # noqa: TC001 Needed by _add_toolkit_output
+from langflow.graph.edge.schema import EdgeData
 
 # Lazy import to avoid circular dependency
 # from langflow.graph.state.model import create_state_model
 # Lazy import to avoid circular dependency
 # from langflow.graph.utils import has_chat_output
 from langflow.helpers.custom import format_type
+from langflow.inputs.inputs import InputTypes
 from langflow.memory import astore_message, aupdate_messages, delete_message
 from langflow.schema.artifact import get_artifact_type, post_process_raw
 from langflow.schema.data import Data
@@ -142,16 +145,13 @@ class Component(CustomComponent):
 
         # Add unique ID if not provided
         if "_id" not in self.__config:
-            self.__config |= {"_id": f"{self.__class__.__name__}-{nanoid.generate(size=5)}"}
+            self.__config["_id"] = f"{self.__class__.__name__}-{nanoid.generate(size=5)}"
 
-        # Initialize base class
+        # Initialize base class early to ensure all required fields are set
         super().__init__(**self.__config)
 
         # Post-initialization setup
-        if hasattr(self, "_trace_type"):
-            self.trace_type = self._trace_type
-        if not hasattr(self, "trace_type"):
-            self.trace_type = "chain"
+        self.trace_type = getattr(self, "_trace_type", getattr(self, "trace_type", "chain"))
 
         # Setup inputs and outputs
         self._reset_all_output_values()
@@ -1314,10 +1314,16 @@ class Component(CustomComponent):
         return component_toolkit(component=self, metadata=metadata).update_tools_metadata(tools=tools)
 
     def check_for_tool_tag_change(self, old_tags: list[str], new_tags: list[str]) -> bool:
-        # First check length - if different lengths, they can't be equal
+        # Fastest path: Are they the very same object? (ref equality, avoids all checks)
+        if old_tags is new_tags:
+            return False
+        # Next: Are they exactly equal (including order)? (avoids set conversion for identical lists)
+        if old_tags == new_tags:
+            return False
+        # Then, if lengths differ, must be different
         if len(old_tags) != len(new_tags):
             return True
-        # Use set comparison for O(n) average case complexity, earlier the old_tags.sort() != new_tags.sort() was used
+        # Fallback to set check as before for unordered changes or duplicates
         return set(old_tags) != set(new_tags)
 
     def _filter_tools_by_status(self, tools: list[Tool], metadata: pd.DataFrame | None) -> list[Tool]:
