@@ -159,15 +159,9 @@ def is_valid_log_format(format_string) -> bool:
     Returns:
         bool: True if the format string is valid, False otherwise.
     """
-    record = logging.LogRecord(
-        name="dummy", level=logging.INFO, pathname="dummy_path", lineno=0, msg="dummy message", args=None, exc_info=None
-    )
-
     formatter = logging.Formatter(format_string)
-
     try:
-        # Attempt to format the record
-        formatter.format(record)
+        formatter.format(_DUMMY_RECORD)
     except (KeyError, ValueError, TypeError):
         logger.error("Invalid log format string passed, fallback to default")
         return False
@@ -291,3 +285,8 @@ class InterceptHandler(logging.Handler):
             depth += 1
 
         logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+
+
+_DUMMY_RECORD = logging.LogRecord(
+    name="dummy", level=logging.INFO, pathname="dummy_path", lineno=0, msg="dummy message", args=None, exc_info=None
+)
