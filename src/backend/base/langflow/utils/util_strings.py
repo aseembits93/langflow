@@ -15,23 +15,30 @@ def truncate_long_strings(data, max_length=None):
     if max_length < 0:
         return data
 
-    if not isinstance(data, dict | list):
-        if isinstance(data, str) and len(data) > max_length:
+    if isinstance(data, str):
+        # Truncate if necessary
+        if len(data) > max_length:
             return data[:max_length] + "..."
         return data
-
     if isinstance(data, dict):
-        for key, value in data.items():
-            if isinstance(value, str) and len(value) > max_length:
-                data[key] = value[:max_length] + "..."
-            elif isinstance(value, (dict | list)):
-                truncate_long_strings(value, max_length)
-    elif isinstance(data, list):
+        # Use list of items for faster and safer in-place update
+        for key in data:
+            value = data[key]
+            if isinstance(value, str):
+                if len(value) > max_length:
+                    data[key] = value[:max_length] + "..."
+            elif isinstance(value, (dict, list)):
+                data[key] = truncate_long_strings(value, max_length)
+        return data
+    if isinstance(data, list):
+        # Using enumerate and in-place assignment
         for index, item in enumerate(data):
-            if isinstance(item, str) and len(item) > max_length:
-                data[index] = item[:max_length] + "..."
-            elif isinstance(item, (dict | list)):
-                truncate_long_strings(item, max_length)
+            if isinstance(item, str):
+                if len(item) > max_length:
+                    data[index] = item[:max_length] + "..."
+            elif isinstance(item, (dict, list)):
+                data[index] = truncate_long_strings(item, max_length)
+        return data
 
     return data
 
