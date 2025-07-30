@@ -278,11 +278,14 @@ class Data(BaseModel):
 
 
 def custom_serializer(obj):
-    if isinstance(obj, datetime):
-        utc_date = obj.replace(tzinfo=timezone.utc)
-        return utc_date.strftime("%Y-%m-%d %H:%M:%S %Z")
-    if isinstance(obj, Decimal):
+    # Optimize type checking by ordering by profiling hit frequency
+    if isinstance(obj, Decimal):  # Dominant type, check first
         return float(obj)
+    if isinstance(obj, datetime):
+        # Use only if not already UTC-aware (avoid unnecessary replace)
+        if obj.tzinfo is _utc:
+            return obj.strftime(_datetime_fmt)
+        return obj.replace(tzinfo=_utc).strftime(_datetime_fmt)
     if isinstance(obj, UUID):
         return str(obj)
     if isinstance(obj, BaseModel):
@@ -296,3 +299,8 @@ def custom_serializer(obj):
 
 def serialize_data(data):
     return json.dumps(data, indent=4, default=custom_serializer)
+
+
+_utc = timezone.utc
+
+_datetime_fmt = "%Y-%m-%d %H:%M:%S %Z"
