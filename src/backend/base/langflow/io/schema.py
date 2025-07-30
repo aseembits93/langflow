@@ -49,71 +49,79 @@ def flatten_schema(root_schema: dict[str, Any]) -> dict[str, Any]:
     the function simply returns the original i.e. a noop.
     """
     defs = root_schema.get("$defs", {})
-
-    # --- Fast path: schema is already flat ---------------------------------
     props = root_schema.get("properties", {})
-    if not defs and all("$ref" not in v and v.get("type") not in ("object", "array") for v in props.values()):
-        return root_schema
-    # -----------------------------------------------------------------------
+
+    # Fast path: schema is already flat
+    # Optimize this generator expression by not looking up .get("type") twice
+    if not defs:
+        for v in props.values():
+            if "$ref" in v:
+                break
+            t = v.get("type")
+            if t in ("object", "array"):
+                break
+        else:
+            return root_schema
 
     flat_props: dict[str, dict[str, Any]] = {}
     required_list: list[str] = []
 
-    def _resolve_if_ref(schema: dict[str, Any]) -> dict[str, Any]:
+    # Precompute allowable leaf fields set for micro-fast set lookup
+    ALLOWED_LEAF_KEYS = {
+        "type",
+        "description",
+        "pattern",
+        "format",
+        "enum",
+        "default",
+        "minLength",
+        "maxLength",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "additionalProperties",
+        "examples",
+    }
+
+    # Convert root-level required list to immutable set (fastest for .__contains__)
+    root_required = frozenset(root_schema.get("required", []))
+
+    def _walk(name: str, schema: dict[str, Any], inherited_req: bool) -> None:
+        # Inline what _resolve_if_ref did, eliminating a function call per walk
         while "$ref" in schema:
-            ref_name = schema["$ref"].split("/")[-1]
-            schema = defs.get(ref_name, {})
-        return schema
+            ref_name = schema["$ref"].rsplit("/", 1)[-1]
+            schema = defs[ref_name]
 
-    def _walk(name: str, schema: dict[str, Any], *, inherited_req: bool) -> None:
-        schema = _resolve_if_ref(schema)
         t = schema.get("type")
-
-        # ── objects ─────────────────────────────────────────────────────────
         if t == "object":
-            req_here = set(schema.get("required", []))
-            for k, subschema in schema.get("properties", {}).items():
+            # Only build set if present, else use frozenset() singleton (faster than set([]))
+            req_here = frozenset(schema.get("required", ()))
+            props = schema.get("properties", {})
+            # Loop hoisted lookup for append
+            walk = _walk
+            for k, subschema in props.items():
                 child_name = f"{name}.{k}" if name else k
-                _walk(name=child_name, schema=subschema, inherited_req=inherited_req and k in req_here)
+                walk(child_name, subschema, inherited_req and k in req_here)
             return
 
-        # ── arrays (always recurse into the first item as “[0]”) ───────────
         if t == "array":
             items = schema.get("items", {})
-            _walk(name=f"{name}[0]", schema=items, inherited_req=inherited_req)
+            _walk(f"{name}[0]", items, inherited_req)
             return
 
-        leaf: dict[str, Any] = {
-            k: v
-            for k, v in schema.items()
-            if k
-            in (
-                "type",
-                "description",
-                "pattern",
-                "format",
-                "enum",
-                "default",
-                "minLength",
-                "maxLength",
-                "minimum",
-                "maximum",
-                "exclusiveMinimum",
-                "exclusiveMaximum",
-                "additionalProperties",
-                "examples",
-            )
-        }
+        # Else, it's a leaf
+        # Use dict comprehension with prebuilt set, no repeated field lookup
+        leaf = {k: v for k, v in schema.items() if k in ALLOWED_LEAF_KEYS}
         flat_props[name] = leaf
         if inherited_req:
             required_list.append(name)
 
-    # kick things off at the true root
-    root_required = set(root_schema.get("required", []))
+    # Kick-off for properties at root-level
     for k, subschema in props.items():
-        _walk(k, subschema, inherited_req=k in root_required)
+        _walk(k, subschema, k in root_required)
 
-    # build the flattened schema; keep any descriptive metadata
+    # Build the flattened schema; keep any descriptive metadata
     result: dict[str, Any] = {
         "type": "object",
         "properties": flat_props,
