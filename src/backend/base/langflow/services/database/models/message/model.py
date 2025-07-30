@@ -142,12 +142,25 @@ class MessageTable(MessageBase, table=True):  # type: ignore[call-arg]
     @field_validator("properties", "content_blocks", mode="before")
     @classmethod
     def validate_properties_or_content_blocks(cls, value):
+        # Fast path: already a dict (target type), don’t process further
+        if isinstance(value, dict):
+            return value
+        # Fast path for empty list
         if isinstance(value, list):
-            return [cls.validate_properties_or_content_blocks(item) for item in value]
-        if hasattr(value, "model_dump"):
-            return value.model_dump()
+            if not value:
+                return value
+            # Only map if items might not be dicts
+            return [
+                item if isinstance(item, dict) else cls.validate_properties_or_content_blocks(item) for item in value
+            ]
+        # model_dump method (Pydantic model)
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            return model_dump()
+        # String (try to load as JSON)
         if isinstance(value, str):
             return json.loads(value)
+        # Final fallback: return as-is
         return value
 
     @field_serializer("properties", "content_blocks")
