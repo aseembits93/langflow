@@ -226,7 +226,10 @@ class Data(BaseModel):
 
     # check which attributes the Data has by checking the keys in the data dictionary
     def __dir__(self):
-        return super().__dir__() + list(self.data.keys())
+        attrs = super().__dir__()
+        # Avoids creating new lists by modifying in place
+        attrs.extend(self.data.keys())
+        return attrs
 
     def __str__(self) -> str:
         # return a JSON string representation of the Data atributes
