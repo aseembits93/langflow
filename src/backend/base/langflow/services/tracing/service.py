@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from langflow.services.base import Service
+from langflow.services.settings.service import SettingsService
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -36,9 +37,12 @@ def _get_langwatch_tracer():
 
 
 def _get_langfuse_tracer():
-    from langflow.services.tracing.langfuse import LangFuseTracer
+    global _LANGFUSE_TRACER
+    if _LANGFUSE_TRACER is None:
+        from langflow.services.tracing.langfuse import LangFuseTracer
 
-    return LangFuseTracer
+        _LANGFUSE_TRACER = LangFuseTracer
+    return _LANGFUSE_TRACER
 
 
 def _get_arize_phoenix_tracer():
@@ -429,3 +433,6 @@ class TracingService(Service):
             if langchain_callback:
                 callbacks.append(langchain_callback)
         return callbacks
+
+
+_LANGFUSE_TRACER = None
