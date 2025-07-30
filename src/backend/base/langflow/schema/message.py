@@ -471,3 +471,6 @@ class ErrorMessage(Message):
             ],
             flow_id=flow_id,
         )
+
+
+_iso8601_re = re.compile(r"^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z| ?UTC| ?\+00:00)?$")
