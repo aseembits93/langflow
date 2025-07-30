@@ -22,14 +22,17 @@ from langflow.base.tools.constants import (
     TOOLS_METADATA_INPUT_NAME,
 )
 from langflow.custom.tree_visitor import RequiredInputsVisitor
+from langflow.events.event_manager import EventManager
 from langflow.exceptions.component import StreamingError
 from langflow.field_typing import Tool  # noqa: TC001 Needed by _add_toolkit_output
+from langflow.graph.edge.schema import EdgeData
 
 # Lazy import to avoid circular dependency
 # from langflow.graph.state.model import create_state_model
 # Lazy import to avoid circular dependency
 # from langflow.graph.utils import has_chat_output
 from langflow.helpers.custom import format_type
+from langflow.inputs.inputs import InputTypes
 from langflow.memory import astore_message, aupdate_messages, delete_message
 from langflow.schema.artifact import get_artifact_type, post_process_raw
 from langflow.schema.data import Data
@@ -604,10 +607,12 @@ class Component(CustomComponent):
         )
 
     def _build_error_string_from_matching_pairs(self, matching_pairs: list[tuple[Output, Input]]):
-        text = ""
-        for output, input_ in matching_pairs:
-            text += f"{output.name}[{','.join(output.types)}]->{input_.name}[{','.join(input_.input_types or [])}]\n"
-        return text
+        # Build all strings first, then join for better performance
+        lines = [
+            f"{output.name}[{','.join(output.types)}]->{input_.name}[{','.join(input_.input_types or [])}]\n"
+            for output, input_ in matching_pairs
+        ]
+        return "".join(lines)
 
     def _find_matching_output_method(self, input_name: str, value: Component):
         """Find the output method from the given component and input name.
@@ -630,34 +635,34 @@ class Component(CustomComponent):
             ValueError: If multiple matching outputs are found, if no matching outputs are found,
                         or if the output method is invalid.
         """
-        # Retrieve all outputs from the given component
         outputs = value._outputs_map.values()
-        # Prepare to collect matching output-input pairs
-        matching_pairs = []
-        # Get the input object from the current component
         input_ = self._inputs[input_name]
-        # Iterate over outputs to find matches based on types
-        matching_pairs = [
-            (output, input_)
-            for output in outputs
-            for output_type in output.types
-            # Check if the output type matches the input's accepted types
-            if input_.input_types and output_type in input_.input_types
-        ]
-        # If multiple matches are found, raise an error indicating ambiguity
+        input_types = input_.input_types
+        # PREOPTIMIZATION: Use set for input_types for fast lookup, avoid repeated checks
+        if input_types:
+            input_types_set = set(input_types)
+            # Instead of nested loop in an inline list comprehension, do flat for-loops
+            # Also, avoid reading 'input_.input_types' multiple times, use local input_types_set
+            matching_pairs = []
+            append = matching_pairs.append
+            for output in outputs:
+                for output_type in output.types:
+                    if output_type in input_types_set:
+                        append((output, input_))
+        else:
+            matching_pairs = []
+
         if len(matching_pairs) > 1:
             matching_pairs_str = self._build_error_string_from_matching_pairs(matching_pairs)
             msg = self.build_component_error_message(
                 f"There are multiple outputs from {value.display_name} that can connect to inputs: {matching_pairs_str}"
             )
             raise ValueError(msg)
-        # If no matches are found, raise an error indicating no suitable output
         if not matching_pairs:
             msg = self.build_input_error_message(input_name, f"No matching output from {value.display_name} found")
             raise ValueError(msg)
-        # Get the matching output and input pair
         output, input_ = matching_pairs[0]
-        # Ensure that the output method is a valid method name (string)
+        # Fast type check for 'output.method'
         if not isinstance(output.method, str):
             msg = self.build_component_error_message(
                 f"Method {output.method} is not a valid output of {value.display_name}"
