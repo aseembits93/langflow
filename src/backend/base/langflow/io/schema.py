@@ -125,56 +125,68 @@ def flatten_schema(root_schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def schema_to_langflow_inputs(schema: type[BaseModel]) -> list[InputTypes]:
+    fields = schema.model_fields
+    make_title = str.title
+    make_disp = str.replace
+    convert_type = _convert_type_to_field_type
+
     inputs: list[InputTypes] = []
 
-    for field_name, model_field in schema.model_fields.items():
+    for field_name, model_field in fields.items():
         ann = model_field.annotation
+
+        # Prepare display values just once per iteration
+        title = model_field.title
+        display_name = title if title is not None else make_title(make_disp(field_name, "_", " "))
+        info = model_field.description or ""
+        required = model_field.is_required()
+
+        # Unwrap Python 3.10+ UnionType (PEP 604, i.e. X | Y)
+        ann_origin = get_origin(ann)
         if isinstance(ann, UnionType):
-            # Extract non-None types from Union
-            non_none_types = [t for t in get_args(ann) if t is not type(None)]
-            if len(non_none_types) == 1:
-                ann = non_none_types[0]
+            ann_args = get_args(ann)
+            for t in ann_args:
+                if t is not type(None):
+                    ann = t
+                    break
+            ann_origin = get_origin(ann)
 
+        # Handle List
         is_list = False
-
-        if get_origin(ann) is list:
+        if ann_origin is list:
             is_list = True
-            ann = get_args(ann)[0]
+            ann_args = get_args(ann)
+            if ann_args:
+                ann = ann_args[0]
+                ann_origin = get_origin(ann)
 
-        options: list[Any] | None = None
-        if get_origin(ann) is Literal:
-            options = list(get_args(ann))
-            if options:
+        # Handle Literal
+        options = None
+        if ann_origin is Literal:
+            options_ = get_args(ann)
+            if options_:
+                options = list(options_)
                 ann = type(options[0])
+                ann_origin = get_origin(ann)
 
-        if get_origin(ann) is Union:
-            non_none = [t for t in get_args(ann) if t is not type(None)]
-            if len(non_none) == 1:
-                ann = non_none[0]
+        # Handle Union (possibly Optional)
+        if ann_origin is Union:
+            ann_args = get_args(ann)
+            for t in ann_args:
+                if t is not type(None):
+                    ann = t
+                    break
+            ann_origin = get_origin(ann)
 
-        # 1) Nested Pydantic model?
-        # if isinstance(ann, type) and issubclass(ann, BaseModel):
-        #    nested = schema_to_langflow_inputs(ann)
-        #    inputs.append(
-        #        ObjectInput(
-        #            display_name=model_field.title or field_name.replace("_", " ").title(),
-        #            name=field_name,
-        #            info=model_field.description or "",
-        #            required=model_field.is_required(),
-        #            is_list=is_list,
-        #            inputs=nested,
-        #        )
-        #    )
-        #    continue
-
+        # 1) Nested Pydantic model? -- skipped per original code (commented out)
         # 2) Enumerated choices
         if options is not None:
             inputs.append(
                 DropdownInput(
-                    display_name=model_field.title or field_name.replace("_", " ").title(),
+                    display_name=display_name,
                     name=field_name,
-                    info=model_field.description or "",
-                    required=model_field.is_required(),
+                    info=info,
+                    required=required,
                     is_list=is_list,
                     options=options,
                 )
@@ -185,27 +197,27 @@ def schema_to_langflow_inputs(schema: type[BaseModel]) -> list[InputTypes]:
         if ann is Any:
             inputs.append(
                 MessageTextInput(
-                    display_name=model_field.title or field_name.replace("_", " ").title(),
+                    display_name=display_name,
                     name=field_name,
-                    info=model_field.description or "",
-                    required=model_field.is_required(),
+                    info=info,
+                    required=required,
                     is_list=is_list,
                 )
             )
             continue
 
-        # 4) Primitive via your mapping
+        # 4) Primitive via mapping
         try:
-            lf_cls = _convert_type_to_field_type[ann]
+            lf_cls = convert_type[ann]
         except KeyError as err:
             msg = f"Unsupported field type: {ann}"
             raise TypeError(msg) from err
         inputs.append(
             lf_cls(
-                display_name=model_field.title or field_name.replace("_", " ").title(),
+                display_name=display_name,
                 name=field_name,
-                info=model_field.description or "",
-                required=model_field.is_required(),
+                info=info,
+                required=required,
                 is_list=is_list,
             )
         )
