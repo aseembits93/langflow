@@ -14,7 +14,7 @@ def extract_inner_type_from_generic_alias(return_type: GenericAlias) -> Any:
 
 def extract_inner_type(return_type: str) -> str:
     """Extracts the inner type from a type hint that is a list."""
-    if match := re.match(r"list\[(.*)\]", return_type, re.IGNORECASE):
+    if match := _LIST_TYPE_PATTERN.match(return_type):
         return match[1]
     return return_type
 
@@ -76,3 +76,6 @@ def extract_union_types_from_generic_alias(return_type: GenericAlias) -> list:
         ]
 
     return list(return_type.__args__)
+
+
+_LIST_TYPE_PATTERN = re.compile(r"list\[(.*)\]", re.IGNORECASE)
