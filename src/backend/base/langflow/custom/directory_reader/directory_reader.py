@@ -180,12 +180,13 @@ class DirectoryReader:
 
     def _is_type_hint_in_arg_annotation(self, annotation, type_hint_name: str) -> bool:
         """Helper function to check if a type hint exists in an annotation."""
-        return (
-            annotation is not None
-            and isinstance(annotation, ast.Subscript)
-            and isinstance(annotation.value, ast.Name)
-            and annotation.value.id == type_hint_name
-        )
+        # Fast path: avoid chained 'and' by checking each condition sequentially, with early return.
+        if not isinstance(annotation, ast.Subscript):
+            return False
+        val = annotation.value
+        if not isinstance(val, ast.Name):
+            return False
+        return val.id == type_hint_name
 
     def is_type_hint_used_but_not_imported(self, type_hint_name: str, code: str) -> bool:
         """Check if a type hint is used but not imported in the given code."""
