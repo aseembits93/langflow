@@ -147,10 +147,11 @@ class DirectoryReader:
 
     def find_menu(self, response, menu_name):
         """Find and return a menu by its name in the response."""
-        return next(
-            (menu for menu in response["menu"] if menu["name"] == menu_name),
-            None,
-        )
+        menus = response["menu"]
+        for menu in menus:
+            if menu["name"] == menu_name:
+                return menu
+        return None
 
     def _is_type_hint_imported(self, type_hint_name: str, code: str) -> bool:
         """Check if a specific type hint is imported from the typing module in the given code."""
