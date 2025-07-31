@@ -1,6 +1,7 @@
 import ast
 import asyncio
 import zlib
+from functools import lru_cache
 from pathlib import Path
 
 import anyio
@@ -350,10 +351,11 @@ class DirectoryReader:
         return response
 
     @staticmethod
+    @lru_cache(maxsize=128)
     def get_output_types_from_code(code: str) -> list:
         """Get the output types from the code."""
+        # Creating Component and getting return types is expensive; cache on code text
         custom_component = Component(_code=code)
         types_list = custom_component._get_function_entrypoint_return_type
-
-        # Get the name of types classes
+        # The comprehension is negligible, so keep as is.
         return [type_.__name__ for type_ in types_list if hasattr(type_, "__name__")]
