@@ -154,14 +154,28 @@ class DirectoryReader:
 
     def _is_type_hint_imported(self, type_hint_name: str, code: str) -> bool:
         """Check if a specific type hint is imported from the typing module in the given code."""
-        module = ast.parse(code)
 
-        return any(
-            isinstance(node, ast.ImportFrom)
-            and node.module == "typing"
-            and any(alias.name == type_hint_name for alias in node.names)
-            for node in ast.walk(module)
-        )
+        # Use a fast, explicit visitor rather than ast.walk.
+        class TypingImportFinder(ast.NodeVisitor):
+            def __init__(self):
+                self.found = False
+
+            def visit_ImportFrom(self, node):
+                if node.module == "typing":
+                    for alias in node.names:
+                        if alias.name == type_hint_name:
+                            self.found = True
+                            return  # Early exit for this node
+                # Continue visiting in case there are more imports
+
+            def generic_visit(self, node):
+                if not self.found:
+                    super().generic_visit(node)
+
+        module = ast.parse(code)
+        visitor = TypingImportFinder()
+        visitor.visit(module)
+        return visitor.found
 
     def _is_type_hint_used_in_args(self, type_hint_name: str, code: str) -> bool:
         """Check if a specific type hint is used in the function definitions within the given code."""
