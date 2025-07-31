@@ -167,12 +167,17 @@ class DirectoryReader:
         """Check if a specific type hint is used in the function definitions within the given code."""
         try:
             module = ast.parse(code)
-
-            for node in ast.walk(module):
+            # Instead of ast.walk, traverse only top-level and recursively process bodies to find FunctionDef nodes
+            stack = list(getattr(module, "body", []))
+            while stack:
+                node = stack.pop()
                 if isinstance(node, ast.FunctionDef):
                     for arg in node.args.args:
                         if self._is_type_hint_in_arg_annotation(arg.annotation, type_hint_name):
                             return True
+                # Function and class bodies can contain more function defs, so traverse those as well
+                if hasattr(node, "body") and isinstance(node.body, list):
+                    stack.extend(reversed(node.body))  # reversed for natural order, but not needed for correctness
         except SyntaxError:
             # Returns False if the code is not valid Python
             return False
