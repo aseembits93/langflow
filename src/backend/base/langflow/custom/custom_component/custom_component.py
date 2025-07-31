@@ -11,10 +11,14 @@ from langchain_core.documents import Document
 from pydantic import BaseModel
 
 from langflow.custom.custom_component.base_component import BaseComponent
+from langflow.graph.vertex.base import Vertex
 from langflow.helpers.flow import list_flows, load_flow, run_flow
 from langflow.schema.data import Data
+from langflow.schema.schema import OutputValue
 from langflow.services.deps import get_storage_service, get_variable_service, session_scope
 from langflow.services.storage.service import StorageService
+from langflow.services.tracing.schema import Log
+from langflow.services.tracing.service import TracingService
 from langflow.template.utils import update_frontend_node_with_template_values
 from langflow.type_extraction.type_extraction import post_process_type
 from langflow.utils import validate
@@ -71,7 +75,9 @@ class CustomComponent(BaseComponent):
         Args:
             **data: Additional keyword arguments to initialize the custom component.
         """
-        # Initialize instance-specific attributes first
+        # Call parent's init first so it's not bypassed by ours
+        super().__init__(**data)
+
         self.is_input: bool | None = None
         self.is_output: bool | None = None
         self.add_tool_output: bool = False
@@ -84,7 +90,6 @@ class CustomComponent(BaseComponent):
         self.repr_value: Any = ""
         self.status: Any | None = None
 
-        # Initialize collections with empty defaults
         self._flows_data: list[Data] | None = None
         self._outputs: list[OutputValue] = []
         self._logs: list[Log] = []
@@ -92,13 +97,9 @@ class CustomComponent(BaseComponent):
         self._tracing_service: TracingService | None = None
         self._tree: dict | None = None
 
-        # Initialize additional instance state
         self.cache: TTLCache = TTLCache(maxsize=1024, ttl=60)
         self._results: dict = {}
         self._artifacts: dict = {}
-
-        # Call parent's init after setting up our attributes
-        super().__init__(**data)
 
     def set_attributes(self, parameters: dict) -> None:
         pass
@@ -192,15 +193,31 @@ class CustomComponent(BaseComponent):
         Returns:
             str: The custom representation of the custom component.
         """
-        if self.repr_value == "":
-            self.repr_value = self.status
-        if isinstance(self.repr_value, dict):
-            return yaml.dump(self.repr_value)
-        if isinstance(self.repr_value, str):
-            return self.repr_value
-        if isinstance(self.repr_value, BaseModel) and not isinstance(self.repr_value, Data):
-            return str(self.repr_value)
-        return self.repr_value
+        val = self.repr_value
+        if val == "":
+            val = self.status
+            self.repr_value = val
+
+        # Dict check first, because yaml.dump is slow, but usually only for dicts
+        if isinstance(val, dict):
+            # Optimize: use faster C-based dumper if available; fallback otherwise
+            try:
+                # PyYAML >= 5, CDumper is often available
+                return yaml.dump(val, Dumper=yaml.CDumper)
+            except Exception:
+                return yaml.dump(val)  # fallback for environments without C dumper
+
+        # str check second
+        if isinstance(val, str):
+            return val
+
+        # BaseModel check (but not Data); optimize to avoid unnecessary checks
+        # Note: hasattr shortcut so isinstance not called on primitives
+        if val is not None and isinstance(val, BaseModel) and not isinstance(val, Data):
+            return str(val)
+
+        # Default: return as is
+        return val
 
     def build_config(self):
         """Builds the configuration for the custom component.
